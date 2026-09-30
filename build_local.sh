@@ -82,7 +82,11 @@ if [[ "$CURRENT_VER" == "$RECOMMENDED_VER" && -f "$SCRIPT_DIR/youtube-morphe.apk
     exit 0
 fi
 
-# 7. Download official YouTube APK
+# 7. Compile in-app update check extension
+echo "[*] Compilation de l'extension de vérification in-app..."
+docker run --rm -v "$SCRIPT_DIR:/app" -w /app eclipse-temurin:21-jdk-alpine sh -c "apk add --no-cache python3 >/dev/null && python3 build_patch.py"
+
+# 8. Download official YouTube APK
 STOCK_APK="$SCRIPT_DIR/youtube-stock.apk"
 echo "[*] Téléchargement de l'APK officiel YouTube $RECOMMENDED_VER..."
 STOCK_URL="https://archive.org/download/jhc-apks/apks/com.google.android.youtube/com.google.android.youtube-${RECOMMENDED_VER}-all.apk"
@@ -96,11 +100,13 @@ fi
 
 echo "[+] APK officiel téléchargé avec succès ($(du -h "$STOCK_APK" | cut -f1))."
 
-# 8. Patch with Morphe
-echo "[*] Application des patches Morphe (cela peut prendre 1 à 2 minutes)..."
+# 9. Patch with Morphe & In-App Updater
+echo "[*] Application des patches Morphe et de l'in-app updater..."
 docker run --rm --memory=3g -v "$SCRIPT_DIR:/app" -w /app eclipse-temurin:21-jre-alpine \
     java -Xmx2g -jar "$DESKTOP_JAR_NAME" patch \
     -p "$PATCHES_MPP_NAME" \
+    -p update-check.mpp \
+    -e "j-hc Update Check" \
     --keystore=morphe.keystore \
     --keystore-password=morphepass \
     --keystore-entry-alias=morphe \
@@ -119,7 +125,7 @@ rm -rf "$SCRIPT_DIR/morphe-data/tmp" 2>/dev/null || true
 echo "$RECOMMENDED_VER" > "$SCRIPT_DIR/version.txt"
 
 echo "=========================================="
-echo "[+] SUCCÈS ! APK généré avec succès :"
+echo "[+] SUCCÈS ! APK avec In-App Update généré avec succès :"
 echo "    -> $SCRIPT_DIR/youtube-morphe.apk ($(du -h "$SCRIPT_DIR/youtube-morphe.apk" | cut -f1))"
 echo "    -> Version : $RECOMMENDED_VER"
 echo "=========================================="

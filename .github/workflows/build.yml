@@ -30,6 +30,11 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Download Morphe Desktop & Patches
         id: prepare_morphe
         env:
@@ -78,6 +83,17 @@ jobs:
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Build In-App Update Patch
+        if: steps.check_release.outputs.should_build == 'true'
+        run: |
+          echo "[*] Téléchargement des dépendances de compilation du patch in-app..."
+          mkdir -p libs
+          curl -sL "https://raw.githubusercontent.com/Sable/android-platforms/master/android-34/android.jar" -o libs/android.jar
+          curl -sL "https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.2.42/r8-8.2.42.jar" -o libs/r8.jar
+
+          echo "[*] Compilation du patch in-app personnalisé..."
+          python3 build_patch.py
+
       - name: Download Stock YouTube APK
         if: steps.check_release.outputs.should_build == 'true'
         run: |
@@ -87,12 +103,14 @@ jobs:
           curl -f -sL "$URL" -o youtube-stock.apk
           ls -lh youtube-stock.apk
 
-      - name: Patch APK with Morphe
+      - name: Patch APK with Morphe & In-App Updater
         if: steps.check_release.outputs.should_build == 'true'
         run: |
-          echo "[*] Application des patchs Morphe..."
+          echo "[*] Application des patchs Morphe avec In-App Update Check..."
           java -Xmx4g -jar morphe-desktop.jar patch \
             -p patches.mpp \
+            -p update-check.mpp \
+            -e "j-hc Update Check" \
             --keystore=morphe.keystore \
             --keystore-password=morphepass \
             --keystore-entry-alias=morphe \
@@ -109,7 +127,7 @@ jobs:
         run: |
           TAG="v${{ steps.detect_ver.outputs.youtube_ver }}"
           TITLE="YouTube Morphe v${{ steps.detect_ver.outputs.youtube_ver }}"
-          NOTES="Build automatique de YouTube Morphe v${{ steps.detect_ver.outputs.youtube_ver }} avec les patchs Morphe ${{ steps.prepare_morphe.outputs.patches_tag }}."
+          NOTES="Build automatique de YouTube Morphe v${{ steps.detect_ver.outputs.youtube_ver }} avec les patchs Morphe ${{ steps.prepare_morphe.outputs.patches_tag }} et module de mise à jour in-app intégré."
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "[*] Mise à jour de la release existante $TAG..."

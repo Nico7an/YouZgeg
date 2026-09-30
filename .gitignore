@@ -5,9 +5,13 @@
 *.apkm
 *.xapk
 
-# Jars and patch bundles (downloaded dynamically)
+# Jars and libraries
 *.jar
-*.mpp
+libs/
+
+# Downloaded official patches bundle (dynamic)
+patches-*.mpp
+patches.mpp
 
 # Morphe temp data
 morphe-data/
