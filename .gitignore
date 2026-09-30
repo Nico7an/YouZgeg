@@ -1,0 +1,19 @@
+# Git ignore for YouZgeg
+
+# APK files (too large for git, published in GitHub Releases)
+*.apk
+*.apkm
+*.xapk
+
+# Jars and patch bundles (downloaded dynamically)
+*.jar
+*.mpp
+
+# Morphe temp data
+morphe-data/
+.build_tmp/
+temp/
+
+# OS / Editor files
+.DS_Store
+*.log

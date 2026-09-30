@@ -1,0 +1,121 @@
+name: Build & Release YouTube Morphe
+
+on:
+  schedule:
+    # Run every day at 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Forcer la compilation même si la version existe déjà'
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-morphe
+  cancel-in-progress: false
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Download Morphe Desktop & Patches
+        id: prepare_morphe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "[*] Récupération de la dernière version de Morphe Desktop..."
+          DESKTOP_ASSET_URL=$(curl -sL https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest | jq -r '.assets[] | select(.name | test("morphe-desktop-.*-all\\.jar$")) | .browser_download_url' | head -n 1)
+          curl -sL "$DESKTOP_ASSET_URL" -o morphe-desktop.jar
+
+          echo "[*] Récupération de la dernière version de Morphe Patches..."
+          PATCHES_RELEASE=$(curl -sL https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest)
+          PATCHES_TAG=$(echo "$PATCHES_RELEASE" | jq -r '.tag_name')
+          PATCHES_ASSET_URL=$(echo "$PATCHES_RELEASE" | jq -r '.assets[] | select(.name | test("patches-.*\\.mpp$")) | .browser_download_url' | head -n 1)
+          curl -sL "$PATCHES_ASSET_URL" -o patches.mpp
+
+          echo "patches_tag=$PATCHES_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Determine Compatible YouTube Version
+        id: detect_ver
+        run: |
+          echo "[*] Détection des versions compatibles..."
+          COMPAT_OUTPUT=$(java -jar morphe-desktop.jar list-versions --patches=patches.mpp -f=com.google.android.youtube 2>/dev/null || true)
+          echo "$COMPAT_OUTPUT"
+          
+          RECOMMENDED_VER=$(echo "$COMPAT_OUTPUT" | grep -E '^[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | awk '{print $1}')
+          if [ -z "$RECOMMENDED_VER" ]; then
+            RECOMMENDED_VER="21.16.256"
+          fi
+          
+          echo "youtube_ver=$RECOMMENDED_VER" >> "$GITHUB_OUTPUT"
+          echo "Target YouTube version: $RECOMMENDED_VER"
+
+      - name: Check Existing Releases
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TARGET_TAG="v${{ steps.detect_ver.outputs.youtube_ver }}"
+          FORCE_BUILD="${{ github.event.inputs.force }}"
+
+          if gh release view "$TARGET_TAG" >/dev/null 2>&1 && [ "$FORCE_BUILD" != "true" ]; then
+            echo "[+] La version $TARGET_TAG est déjà publiée. Rien à faire."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "[*] Nouvelle version ou build forcé détecté ($TARGET_TAG)."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Stock YouTube APK
+        if: steps.check_release.outputs.should_build == 'true'
+        run: |
+          VER="${{ steps.detect_ver.outputs.youtube_ver }}"
+          URL="https://archive.org/download/jhc-apks/apks/com.google.android.youtube/com.google.android.youtube-${VER}-all.apk"
+          echo "[*] Téléchargement de l'APK officiel YouTube $VER..."
+          curl -f -sL "$URL" -o youtube-stock.apk
+          ls -lh youtube-stock.apk
+
+      - name: Patch APK with Morphe
+        if: steps.check_release.outputs.should_build == 'true'
+        run: |
+          echo "[*] Application des patchs Morphe..."
+          java -Xmx4g -jar morphe-desktop.jar patch \
+            -p patches.mpp \
+            --keystore=morphe.keystore \
+            --keystore-password=morphepass \
+            --keystore-entry-alias=morphe \
+            --keystore-entry-password=morphepass \
+            -o youtube-morphe.apk \
+            youtube-stock.apk
+
+          ls -lh youtube-morphe.apk
+
+      - name: Publish GitHub Release
+        if: steps.check_release.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.detect_ver.outputs.youtube_ver }}"
+          TITLE="YouTube Morphe v${{ steps.detect_ver.outputs.youtube_ver }}"
+          NOTES="Build automatique de YouTube Morphe v${{ steps.detect_ver.outputs.youtube_ver }} avec les patchs Morphe ${{ steps.prepare_morphe.outputs.patches_tag }}."
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "[*] Mise à jour de la release existante $TAG..."
+            gh release upload "$TAG" youtube-morphe.apk --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            echo "[*] Création de la nouvelle release $TAG..."
+            gh release create "$TAG" youtube-morphe.apk --title "$TITLE" --notes "$NOTES"
+          fi
